@@ -1,0 +1,14 @@
+{
+  "name": "@deonpay/design-tokens",
+  "version": "1.0.0",
+  "description": "DeonPay Design Tokens - Color, spacing, shadows, typography",
+  "main": "dist/tokens.js",
+  "types": "dist/tokens.d.ts",
+  "scripts": {
+    "build": "node build.js",
+    "dev": "node build.js --watch"
+  },
+  "keywords": ["design-tokens", "css", "design-system"],
+  "author": "DeonPay",
+  "license": "MIT"
+}
