@@ -33,11 +33,11 @@ export default function HubSidebar({ role }: { role: string }) {
             <Link
               key={item.href}
               href={item.href}
-              className={\`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors \${
+              className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
                 isActive
                   ? 'bg-[var(--color-primary)] text-white'
                   : 'text-[var(--color-textSecondary)] hover:bg-[var(--color-background)] hover:text-[var(--color-textPrimary)]'
-              }\`}
+              }`}
             >
               <Icon size={20} />
               <span className="font-medium">{item.label}</span>
