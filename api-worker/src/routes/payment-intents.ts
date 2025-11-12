@@ -12,6 +12,7 @@ import {
 } from '../schemas/canonical'
 import { confirmPaymentIntent, captureCharge } from '../router'
 import { processRawCardData } from '../utils/card'
+import { emitEvent } from '../router/events'
 
 const app = new Hono()
 
@@ -41,6 +42,14 @@ app.post('/', async (c) => {
     if (error) {
       throw new Error(`Database error: ${error.message}`)
     }
+
+    // Emit payment_intent.created event
+    await emitEvent({
+      supabase,
+      merchantId,
+      eventType: 'payment_intent.created',
+      data,
+    }).catch((err) => console.error('[PaymentIntents] Error emitting event:', err))
 
     return c.json(data, 201)
 

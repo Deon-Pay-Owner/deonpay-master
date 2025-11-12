@@ -261,6 +261,16 @@ export async function confirmPaymentIntent(
         .select()
         .single()
 
+      // Emit event
+      await emitEvent({
+        supabase,
+        merchantId,
+        eventType: 'payment_intent.requires_action',
+        data: updatedPI,
+      }).catch((err) =>
+        console.error('[Router] Error emitting event:', err)
+      )
+
       return {
         paymentIntent: updatedPI,
         requiresAction: true,
@@ -297,6 +307,21 @@ export async function confirmPaymentIntent(
         .select()
         .single()
 
+      // Emit events
+      await emitEvent({
+        supabase,
+        merchantId,
+        eventType: 'payment_intent.failed',
+        data: failedPI,
+      }).catch((err) => console.error('[Router] Error emitting event:', err))
+
+      await emitEvent({
+        supabase,
+        merchantId,
+        eventType: 'charge.failed',
+        data: charge,
+      }).catch((err) => console.error('[Router] Error emitting event:', err))
+
       throw new Error(
         authorizeOutput.processorResponse?.message || 'Authorization failed'
       )
@@ -326,6 +351,14 @@ export async function confirmPaymentIntent(
       if (chargeError || !charge) {
         throw new Error(`Failed to create charge: ${chargeError?.message}`)
       }
+
+      // Emit charge.authorized event
+      await emitEvent({
+        supabase,
+        merchantId,
+        eventType: 'charge.authorized',
+        data: charge,
+      }).catch((err) => console.error('[Router] Error emitting event:', err))
 
       // Update PaymentIntent status
       const newStatus =
@@ -697,12 +730,19 @@ export async function voidCharge(
     paymentIntentId: charge.payment_intent_id,
   })
 
-  // Emit event
+  // Emit events
   await emitEvent({
     supabase,
     merchantId,
     eventType: 'charge.voided',
     data: updatedCharge,
+  }).catch((err) => console.error('[Router] Error emitting event:', err))
+
+  await emitEvent({
+    supabase,
+    merchantId,
+    eventType: 'payment_intent.canceled',
+    data: updatedPI,
   }).catch((err) => console.error('[Router] Error emitting event:', err))
 
   return {
