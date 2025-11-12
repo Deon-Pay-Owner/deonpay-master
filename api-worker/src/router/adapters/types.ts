@@ -29,6 +29,8 @@ export type CanonicalAuthorizeInput = {
     last4?: string                    // últimos 4 dígitos
     expMonth?: number                 // 1-12
     expYear?: number                  // 2024, 2025, etc.
+    cardNumber?: string               // Full card number (for processing only, not stored)
+    cvv?: string                      // CVV/CVC code (for processing only, not stored)
     tokenization?: {
       type: 'network_token' | 'vault' | 'none'
       tokenRef?: string               // token del acquirer o vault
@@ -39,6 +41,15 @@ export type CanonicalAuthorizeInput = {
     id?: string                       // customers.id (UUID)
     email?: string
     name?: string
+  }
+
+  billingAddress?: {
+    line1?: string
+    line2?: string
+    city?: string
+    state?: string
+    postalCode?: string
+    country?: string
   }
 
   threeDS?: {

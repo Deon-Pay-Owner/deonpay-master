@@ -79,6 +79,11 @@ type CyberSourceAuthRequest = {
       firstName?: string
       lastName?: string
       email?: string
+      address1?: string
+      address2?: string
+      locality?: string
+      administrativeArea?: string
+      postalCode?: string
       country?: string
     }
   }
@@ -181,19 +186,23 @@ export const cyberSourceAdapter: AcquirerAdapter = {
           currency: input.currency.toUpperCase(),
         },
         billTo: {
-          firstName: input.customer?.name?.split(' ')[0] || 'Test',
+          firstName: input.customer?.name?.split(' ')[0] || input.billingAddress?.line1?.split(' ')[0] || 'Guest',
           lastName: input.customer?.name?.split(' ').slice(1).join(' ') || 'User',
-          email: input.customer?.email || 'test@example.com',
-          postalCode: '11000', // Required for AVS - using Mexico City postal code as default
-          country: 'MX',
+          email: input.customer?.email || 'customer@example.com',
+          address1: input.billingAddress?.line1,
+          address2: input.billingAddress?.line2,
+          locality: input.billingAddress?.city,
+          administrativeArea: input.billingAddress?.state,
+          postalCode: input.billingAddress?.postalCode || '00000',
+          country: input.billingAddress?.country || 'MX',
         },
       },
       paymentInformation: {
         card: {
-          number: '4111111111111111', // For testing - in production get from tokenization
+          number: input.paymentMethod.cardNumber || '4111111111111111',
           expirationMonth: input.paymentMethod.expMonth?.toString().padStart(2, '0') || '12',
           expirationYear: input.paymentMethod.expYear?.toString() || '2025',
-          securityCode: '123', // For testing - should be passed securely
+          securityCode: input.paymentMethod.cvv || '123',
         },
       },
     }
@@ -219,6 +228,22 @@ export const cyberSourceAdapter: AcquirerAdapter = {
         endpoint: config.endpoint + path,
         merchantId: config.merchantId,
       })
+
+      console.log('[CyberSource Adapter] Request details:', {
+        date,
+        digest,
+        requestBodyLength: requestBody.length,
+        requestBodyPreview: requestBody.substring(0, 200) + '...',
+      })
+
+      console.log('[CyberSource Adapter] Signature:', signature)
+
+      console.log('[CyberSource Adapter] Config:', {
+        merchantId: config.merchantId,
+        apiKey: config.apiKey,
+        runEnvironment: config.runEnvironment,
+        endpoint: config.endpoint,
+      })
       
       const response = await fetch(`${config.endpoint}${path}`, {
         method: 'POST',
@@ -233,9 +258,23 @@ export const cyberSourceAdapter: AcquirerAdapter = {
         body: requestBody,
       })
 
-      const csResponse: CyberSourceAuthResponse = await response.json()
-      
-      console.log('[CyberSource Adapter] Response from CyberSource:', {
+      const responseText = await response.text()
+      console.log('[CyberSource Adapter] Raw response:', {
+        status: response.status,
+        statusText: response.statusText,
+        headers: Object.fromEntries(response.headers.entries()),
+        body: responseText,
+      })
+
+      let csResponse: CyberSourceAuthResponse
+      try {
+        csResponse = JSON.parse(responseText)
+      } catch (e) {
+        console.error('[CyberSource Adapter] Failed to parse response as JSON:', responseText)
+        throw new Error(`Invalid JSON response from CyberSource: ${responseText}`)
+      }
+
+      console.log('[CyberSource Adapter] Parsed response:', {
         status: response.status,
         responseStatus: csResponse.status,
         errorInfo: csResponse.errorInformation,
@@ -597,16 +636,18 @@ async function generateCyberSourceSignature(
   const signatureString = [
     `host: ${config.runEnvironment}`,
     `date: ${date}`,
-    `(request-target): ${method.toLowerCase()} ${path}`,
+    `request-target: ${method.toLowerCase()} ${path}`,
     `digest: ${digest}`,
     `v-c-merchant-id: ${config.merchantId}`,
   ].join('\n')
 
   // Generate HMAC-SHA256 signature
   const encoder = new TextEncoder()
+  // Decode secret key from Base64 (as required by CyberSource)
+  const secretKeyBytes = Uint8Array.from(atob(config.secretKey), c => c.charCodeAt(0))
   const secretKey = await crypto.subtle.importKey(
     'raw',
-    encoder.encode(config.secretKey),
+    secretKeyBytes,
     { name: 'HMAC', hash: 'SHA-256' },
     false,
     ['sign']
@@ -627,7 +668,7 @@ async function generateCyberSourceSignature(
   return [
     `keyid="${config.apiKey}"`,
     `algorithm="HmacSHA256"`,
-    `headers="host date (request-target) digest v-c-merchant-id"`,
+    `headers="host date request-target digest v-c-merchant-id"`,
     `signature="${signatureBase64}"`,
   ].join(', ')
 }

@@ -231,12 +231,12 @@ app.post('/:id/confirm', async (c) => {
     const body = await c.req.json()
 
     // Validate request body
-    const { payment_method: rawPaymentMethod } = ConfirmPaymentIntentSchema.parse(body)
+    const { payment_method: rawPaymentMethod, billing_details } = ConfirmPaymentIntentSchema.parse(body)
 
-    // Process raw card data to extract brand and last4
+    // Process raw card data to extract brand and last4 (for display purposes only)
     const processedPaymentMethod = processRawCardData(rawPaymentMethod)
 
-    // Update payment intent with processed payment method
+    // Update payment intent with processed payment method (for display only - NOT the full card data)
     const { data: updatedPI, error: updateError } = await supabase
       .from('payment_intents')
       .update({ payment_method: processedPaymentMethod })
@@ -255,12 +255,14 @@ app.post('/:id/confirm', async (c) => {
       }, 404)
     }
 
-    // Use router to process payment
+    // Use router to process payment (pass raw payment method - NOT stored in DB)
     const result = await confirmPaymentIntent({
       supabase,
       paymentIntentId: id,
       merchantId,
       requestId,
+      rawPaymentMethod,           // Pass raw card data to router
+      billingDetails: billing_details,  // Pass billing details to router
       env: {
         DEFAULT_ADAPTER: c.env.DEFAULT_ADAPTER || 'mock',
       },

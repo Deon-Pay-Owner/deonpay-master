@@ -1,0 +1,30 @@
+name = "deonpay-api"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+
+# Rutas de producción (conecta api.deonpay.mx con este Worker)
+routes = [
+  { pattern = "api.deonpay.mx/*", zone_name = "deonpay.mx" }
+]
+
+# Variables de entorno globales
+[vars]
+ENVIRONMENT = "production"
+DEFAULT_ADAPTER = "cybersource"
+
+# Development environment
+[env.development]
+name = "deonpay-api-dev"
+vars = { ENVIRONMENT = "development", DEFAULT_ADAPTER = "cybersource" }
+
+# Production environment
+[env.production]
+name = "deonpay-api-production"
+routes = [
+  { pattern = "api.deonpay.mx/*", zone_name = "deonpay.mx" }
+]
+vars = { ENVIRONMENT = "production", DEFAULT_ADAPTER = "cybersource" }
+
+# Secrets (configura estos valores con: wrangler secret put NOMBRE_SECRET)
+# SUPABASE_URL
+# SUPABASE_ANON_KEY
