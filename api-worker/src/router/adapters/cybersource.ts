@@ -180,13 +180,13 @@ export const cyberSourceAdapter: AcquirerAdapter = {
           totalAmount: (input.amount / 100).toFixed(2),
           currency: input.currency.toUpperCase(),
         },
-        billTo: input.customer?.email
-          ? {
-              email: input.customer.email,
-              firstName: input.customer.name?.split(' ')[0] || '',
-              lastName: input.customer.name?.split(' ').slice(1).join(' ') || '',
-            }
-          : undefined,
+        billTo: {
+          firstName: input.customer?.name?.split(' ')[0] || 'Test',
+          lastName: input.customer?.name?.split(' ').slice(1).join(' ') || 'User',
+          email: input.customer?.email || 'test@example.com',
+          postalCode: '11000', // Required for AVS - using Mexico City postal code as default
+          country: 'MX',
+        },
       },
       paymentInformation: {
         card: {

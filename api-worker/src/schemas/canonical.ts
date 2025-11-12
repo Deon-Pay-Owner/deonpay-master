@@ -162,6 +162,18 @@ export const ConfirmPaymentIntentSchema = z.object({
     exp_year: z.number().int().min(2024),
     cvv: z.string().regex(/^\d{3,4}$/, 'Invalid CVV'),
   }),
+  billing_details: z.object({
+    name: z.string().optional(),
+    email: z.string().email().optional(),
+    address: z.object({
+      line1: z.string().optional(),
+      line2: z.string().optional(),
+      city: z.string().optional(),
+      state: z.string().optional(),
+      postal_code: z.string().optional(),
+      country: z.string().length(2).optional(), // ISO 3166-1 alpha-2
+    }).optional(),
+  }).optional(),
 })
 
 export const CapturePaymentIntentSchema = z.object({
