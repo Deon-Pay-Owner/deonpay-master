@@ -13,6 +13,7 @@ import {
 import { confirmPaymentIntent, captureCharge } from '../router'
 import { processRawCardData } from '../utils/card'
 import { emitEvent } from '../router/events'
+import { consumeToken } from '../lib/encryption/tokens'
 
 const app = new Hono()
 
@@ -242,8 +243,40 @@ app.post('/:id/confirm', async (c) => {
     // Validate request body
     const { payment_method: rawPaymentMethod, billing_details } = ConfirmPaymentIntentSchema.parse(body)
 
-    // Process raw card data to extract brand and last4 (for display purposes only)
-    const processedPaymentMethod = processRawCardData(rawPaymentMethod)
+    // Check if payment_method is a token (string starting with 'tok_')
+    let actualCardData = rawPaymentMethod
+    let processedPaymentMethod
+
+    if (typeof rawPaymentMethod === 'string' && rawPaymentMethod.startsWith('tok_')) {
+      // It's a token - retrieve and decrypt card data
+      const encryptionKey = c.env.ENCRYPTION_KEY || 'default-dev-key-change-in-production'
+      const cardData = await consumeToken(rawPaymentMethod, c.env.TOKENS_KV, encryptionKey)
+
+      if (!cardData) {
+        return c.json({
+          error: {
+            type: 'invalid_request_error',
+            message: 'Invalid or expired token',
+            code: 'invalid_token',
+          }
+        }, 400)
+      }
+
+      // Use decrypted card data
+      actualCardData = {
+        type: 'card' as const,
+        number: cardData.number,
+        exp_month: cardData.exp_month,
+        exp_year: cardData.exp_year,
+        cvv: cardData.cvv,
+      }
+
+      // Process for display
+      processedPaymentMethod = processRawCardData(actualCardData)
+    } else {
+      // It's raw card data
+      processedPaymentMethod = processRawCardData(rawPaymentMethod)
+    }
 
     // Update payment intent with processed payment method (for display only - NOT the full card data)
     const { data: updatedPI, error: updateError } = await supabase
@@ -264,14 +297,14 @@ app.post('/:id/confirm', async (c) => {
       }, 404)
     }
 
-    // Use router to process payment (pass raw payment method - NOT stored in DB)
+    // Use router to process payment (pass actual card data - NOT stored in DB)
     const result = await confirmPaymentIntent({
       supabase,
       paymentIntentId: id,
       merchantId,
       requestId,
-      rawPaymentMethod,           // Pass raw card data to router
-      billingDetails: billing_details,  // Pass billing details to router
+      rawPaymentMethod: actualCardData,  // Pass actual card data (from token or direct)
+      billingDetails: billing_details,   // Pass billing details to router
       env: {
         DEFAULT_ADAPTER: c.env.DEFAULT_ADAPTER || 'mock',
       },

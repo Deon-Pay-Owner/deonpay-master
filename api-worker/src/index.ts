@@ -21,6 +21,7 @@ import { paymentIntentsRouter } from './routes/payment-intents'
 import { customersRouter } from './routes/customers'
 import { refundsRouter } from './routes/refunds'
 import { balanceRouter } from './routes/balance'
+import { elementsTokensRouter } from './routes/elements/tokens'
 
 // Import and register adapters
 import { registerAdapter } from './router/adapters'
@@ -39,6 +40,8 @@ type Bindings = {
   DEFAULT_ADAPTER?: string
   RATE_LIMIT_KV?: KVNamespace
   IDEMPOTENCY_KV?: KVNamespace
+  TOKENS_KV?: KVNamespace
+  ENCRYPTION_KEY?: string
   RATE_LIMIT_MAX?: string
   RATE_LIMIT_WINDOW_MS?: string
   IDEMPOTENCY_TTL_SECONDS?: string
@@ -215,6 +218,7 @@ app.route('/api/v1/payment_intents', paymentIntentsRouter)
 app.route('/api/v1/customers', customersRouter)
 app.route('/api/v1/refunds', refundsRouter)
 app.route('/api/v1/balance', balanceRouter)
+app.route('/api/v1/elements/tokens', elementsTokensRouter)
 
 // ============================================================================
 // ERROR HANDLING
