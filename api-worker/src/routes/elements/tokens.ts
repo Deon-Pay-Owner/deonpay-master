@@ -46,7 +46,7 @@ app.post('/', async (c) => {
     }
 
     // Detect card brand
-    const brand = detectCardBrand(card)
+    const brand = detectCardBrand(cardNumber)
 
     // Generate secure token ID
     const tokenId = `tok_${crypto.randomUUID().replace(/-/g, '')}`
