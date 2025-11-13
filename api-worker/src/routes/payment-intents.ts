@@ -17,6 +17,18 @@ import { consumeToken } from '../lib/encryption/tokens'
 
 const app = new Hono()
 
+/**
+ * Generate a random string for client_secret
+ */
+function generateRandomString(length: number): string {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+  const randomValues = new Uint8Array(length)
+  crypto.getRandomValues(randomValues)
+  return Array.from(randomValues)
+    .map(value => chars[value % chars.length])
+    .join('')
+}
+
 // ============================================================================
 // POST /api/v1/payment_intents - Create payment intent
 // ============================================================================
@@ -44,6 +56,10 @@ app.post('/', async (c) => {
       throw new Error(`Database error: ${error.message}`)
     }
 
+    // Generate client_secret for frontend use
+    // Format: pi_{id}_secret_{random}
+    const clientSecret = `${data.id}_secret_${generateRandomString(24)}`
+
     // Emit payment_intent.created event
     await emitEvent({
       supabase,
@@ -52,7 +68,10 @@ app.post('/', async (c) => {
       data,
     }).catch((err) => console.error('[PaymentIntents] Error emitting event:', err))
 
-    return c.json(data, 201)
+    return c.json({
+      ...data,
+      client_secret: clientSecret,
+    }, 201)
 
   } catch (error: any) {
     if (error.name === 'ZodError') {
