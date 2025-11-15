@@ -5,14 +5,17 @@
 
 import { Hono } from 'hono'
 import { CreateRefundSchema } from '../schemas/canonical'
+import type { HonoContext } from '../types/hono'
+import { refundCharge } from '../router'
 
-const app = new Hono()
+const app = new Hono<HonoContext>()
 
 // Create refund
 app.post('/', async (c) => {
   try {
     const merchantId = c.get('merchantId')
     const supabase = c.get('supabase')
+    const requestId = c.get('requestId')
     const body = await c.req.json()
 
     const validatedData = CreateRefundSchema.parse(body)
@@ -43,36 +46,32 @@ app.post('/', async (c) => {
       }, 400)
     }
 
-    // Create refund
-    const { data: refund, error } = await supabase
-      .from('refunds')
-      .insert({
-        merchant_id: merchantId,
-        charge_id: validatedData.charge_id,
-        amount: refundAmount,
-        currency: charge.currency,
-        reason: validatedData.reason,
-        status: 'succeeded', // TODO: In real implementation, call acquirer API
-        metadata: validatedData.metadata,
-      })
-      .select()
-      .single()
+    // Call the router to process refund through the actual acquirer adapter
+    const result = await refundCharge({
+      supabase,
+      chargeId: validatedData.charge_id,
+      merchantId,
+      requestId,
+      amount: refundAmount,
+      reason: validatedData.reason,
+      metadata: validatedData.metadata,
+      env: {
+        DEFAULT_ADAPTER: c.env.DEFAULT_ADAPTER || 'mock',
+        SUPABASE_URL: c.env.SUPABASE_URL,
+        SUPABASE_SERVICE_ROLE_KEY: c.env.SUPABASE_SERVICE_ROLE_KEY,
+      },
+    })
 
-    if (error) throw new Error(error.message)
+    if (!result.success) {
+      return c.json({
+        error: {
+          type: 'api_error',
+          message: result.error || 'Refund failed',
+        }
+      }, 500)
+    }
 
-    // Update charge amounts
-    const newRefundedAmount = charge.amount_refunded + refundAmount
-    const newStatus = newRefundedAmount === charge.amount_captured ? 'refunded' : 'partially_refunded'
-
-    await supabase
-      .from('charges')
-      .update({
-        amount_refunded: newRefundedAmount,
-        status: newStatus,
-      })
-      .eq('id', charge.id)
-
-    return c.json(refund, 201)
+    return c.json(result.refund, 201)
   } catch (error: any) {
     if (error.name === 'ZodError') {
       return c.json({ error: { type: 'validation_error', message: 'Invalid parameters', details: error.errors } }, 400)

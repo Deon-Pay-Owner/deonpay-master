@@ -7,6 +7,10 @@ routes = [
   { pattern = "api.deonpay.mx/*", zone_name = "deonpay.mx" }
 ]
 
+# Cron trigger for webhook processing (every minute)
+[triggers]
+crons = ["* * * * *"]
+
 # Variables de entorno globales
 [vars]
 ENVIRONMENT = "production"

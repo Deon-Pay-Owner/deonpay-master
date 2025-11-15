@@ -22,6 +22,7 @@ import { customersRouter } from './routes/customers'
 import { refundsRouter } from './routes/refunds'
 import { balanceRouter } from './routes/balance'
 import { elementsTokensRouter } from './routes/elements/tokens'
+import { webhooksRouter } from './routes/webhooks'
 
 // Import and register adapters
 import { registerAdapter } from './router/adapters'
@@ -219,6 +220,7 @@ app.route('/api/v1/customers', customersRouter)
 app.route('/api/v1/refunds', refundsRouter)
 app.route('/api/v1/balance', balanceRouter)
 app.route('/api/v1/elements/tokens', elementsTokensRouter)
+app.route('/api/v1/webhooks', webhooksRouter)
 
 // ============================================================================
 // ERROR HANDLING
@@ -249,7 +251,41 @@ app.onError((err, c) => {
 })
 
 // ============================================================================
+// CRON HANDLER
+// ============================================================================
+
+/**
+ * Scheduled event handler for Cloudflare Cron Triggers
+ * Processes pending webhook deliveries every minute
+ */
+async function scheduled(
+  event: ScheduledEvent,
+  env: Bindings,
+  ctx: ExecutionContext
+): Promise<void> {
+  console.log('[Cron] Scheduled webhook processing triggered')
+
+  try {
+    // Create Supabase client
+    const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY)
+
+    // Import webhook processor
+    const { processPendingWebhooks } = await import('./webhooks/dispatcher')
+
+    // Process pending webhooks
+    const processed = await processPendingWebhooks(supabase, 50)
+
+    console.log(`[Cron] Processed ${processed} webhook deliveries`)
+  } catch (error: any) {
+    console.error('[Cron] Error processing webhooks:', error)
+  }
+}
+
+// ============================================================================
 // EXPORT
 // ============================================================================
 
-export default app
+export default {
+  fetch: app.fetch,
+  scheduled,
+}

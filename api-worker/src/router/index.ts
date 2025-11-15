@@ -75,6 +75,25 @@ export type BillingDetails = {
   }
 }
 
+export type CompleteAuthenticationParams = {
+  supabase: SupabaseClient
+  paymentIntentId: string
+  merchantId: string
+  requestId: string
+  authenticationResult: string // PaRes from 3DS
+  merchantData?: string // MD from 3DS
+  env: {
+    DEFAULT_ADAPTER?: string
+    SUPABASE_URL?: string
+    SUPABASE_SERVICE_ROLE_KEY?: string
+  }
+}
+
+export type CompleteAuthenticationResult = {
+  paymentIntent: PaymentIntent
+  charge?: Charge
+}
+
 export type ConfirmPaymentIntentParams = {
   supabase: SupabaseClient
   paymentIntentId: string
@@ -84,6 +103,8 @@ export type ConfirmPaymentIntentParams = {
   billingDetails?: BillingDetails
   env: {
     DEFAULT_ADAPTER?: string
+    SUPABASE_URL?: string
+    SUPABASE_SERVICE_ROLE_KEY?: string
   }
 }
 
@@ -102,6 +123,8 @@ export type CaptureChargeParams = {
   amountToCapture?: number
   env: {
     DEFAULT_ADAPTER?: string
+    SUPABASE_URL?: string
+    SUPABASE_SERVICE_ROLE_KEY?: string
   }
 }
 
@@ -119,6 +142,8 @@ export type RefundChargeParams = {
   reason?: string
   env: {
     DEFAULT_ADAPTER?: string
+    SUPABASE_URL?: string
+    SUPABASE_SERVICE_ROLE_KEY?: string
   }
 }
 
@@ -139,6 +164,8 @@ export type VoidChargeParams = {
   requestId: string
   env: {
     DEFAULT_ADAPTER?: string
+    SUPABASE_URL?: string
+    SUPABASE_SERVICE_ROLE_KEY?: string
   }
 }
 
@@ -244,6 +271,9 @@ export async function confirmPaymentIntent(
         { requestId }
       )
 
+      // Store 3DS data in metadata for later use
+      const threeDSMetadata = authorizeOutput.threeDS?.data || {}
+
       // Update PaymentIntent status to requires_action
       const { data: updatedPI } = await supabase
         .from('payment_intents')
@@ -256,6 +286,10 @@ export async function confirmPaymentIntent(
               config: route.config,
             },
           },
+          metadata: {
+            ...paymentIntent.metadata,
+            threeDS: threeDSMetadata,
+          },
         })
         .eq('id', paymentIntentId)
         .select()
@@ -267,6 +301,7 @@ export async function confirmPaymentIntent(
         merchantId,
         eventType: 'payment_intent.requires_action',
         data: updatedPI,
+        env,
       }).catch((err) =>
         console.error('[Router] Error emitting event:', err)
       )
@@ -313,6 +348,7 @@ export async function confirmPaymentIntent(
         merchantId,
         eventType: 'payment_intent.failed',
         data: failedPI,
+        env,
       }).catch((err) => console.error('[Router] Error emitting event:', err))
 
       await emitEvent({
@@ -320,6 +356,7 @@ export async function confirmPaymentIntent(
         merchantId,
         eventType: 'charge.failed',
         data: charge,
+        env,
       }).catch((err) => console.error('[Router] Error emitting event:', err))
 
       throw new Error(
@@ -358,6 +395,7 @@ export async function confirmPaymentIntent(
         merchantId,
         eventType: 'charge.authorized',
         data: charge,
+        env,
       }).catch((err) => console.error('[Router] Error emitting event:', err))
 
       // Update PaymentIntent status
@@ -392,6 +430,7 @@ export async function confirmPaymentIntent(
         merchantId,
         eventType: 'payment_intent.succeeded',
         data: updatedPI,
+        env,
       }).catch((err) =>
         console.error('[Router] Error emitting event:', err)
       )
@@ -515,6 +554,7 @@ export async function captureCharge(
     merchantId,
     eventType: 'charge.captured',
     data: updatedCharge,
+    env,
   }).catch((err) => console.error('[Router] Error emitting event:', err))
 
   return {
@@ -635,11 +675,221 @@ export async function refundCharge(
     merchantId,
     eventType: 'refund.succeeded',
     data: refund,
+    env,
   }).catch((err) => console.error('[Router] Error emitting event:', err))
 
   return {
     refund,
     charge: updatedCharge,
+  }
+}
+
+// ============================================================================
+// COMPLETE 3DS AUTHENTICATION
+// ============================================================================
+
+/**
+ * Complete 3DS authentication after challenge
+ *
+ * FLOW:
+ * 1. Fetch PaymentIntent from DB
+ * 2. Verify it's in requires_action status
+ * 3. Get acquirer route from PI
+ * 4. Get adapter
+ * 5. Call adapter.authorizeWith3DS() with PaRes
+ * 6. Update payment intent and create charge
+ * 7. Emit events
+ *
+ * @param params - Authentication parameters
+ * @returns Authentication result
+ * @throws Error if validation fails or adapter errors
+ */
+export async function completeAuthentication(
+  params: CompleteAuthenticationParams
+): Promise<CompleteAuthenticationResult> {
+  const { supabase, paymentIntentId, merchantId, requestId, authenticationResult, merchantData, env } = params
+
+  console.log(`[Router] Completing 3DS authentication for ${paymentIntentId}`, {
+    requestId,
+    merchantId,
+    hasPaRes: !!authenticationResult,
+    hasMD: !!merchantData,
+  })
+
+  // STEP 1: Fetch PaymentIntent from database
+  const { data: paymentIntent, error: fetchError } = await supabase
+    .from('payment_intents')
+    .select('*')
+    .eq('id', paymentIntentId)
+    .eq('merchant_id', merchantId)
+    .single()
+
+  if (fetchError || !paymentIntent) {
+    throw new Error(`Payment intent not found: ${paymentIntentId}`)
+  }
+
+  // STEP 2: Verify payment intent is in requires_action status
+  if (paymentIntent.status !== 'requires_action') {
+    throw new Error(`Payment intent is in ${paymentIntent.status} status, expected requires_action`)
+  }
+
+  // STEP 3: Get acquirer route from payment intent
+  const route = paymentIntent.acquirer_routing?.selected_route
+  if (!route) {
+    throw new Error('No acquirer route found in payment intent')
+  }
+
+  console.log(`[Router] Using route: ${route.adapter}`, {
+    requestId,
+    merchantRef: route.merchant_ref,
+  })
+
+  // STEP 4: Get adapter instance
+  const adapter = getAdapter(route.adapter)
+
+  // Check if adapter supports authorizeWith3DS
+  if (!adapter.authorizeWith3DS) {
+    throw new Error(`Adapter ${route.adapter} does not support 3DS authentication`)
+  }
+
+  // STEP 5: Retrieve stored 3DS data (if any)
+  // This could be stored in payment intent metadata or a separate table
+  const threeDSData = paymentIntent.metadata?.threeDS || {}
+
+  // STEP 6: Call adapter to complete 3DS authorization
+  console.log(`[Router] Calling adapter.authorizeWith3DS()`, { requestId })
+
+  const authorizeOutput = await adapter.authorizeWith3DS({
+    paymentIntentId,
+    requestId,
+    acquirerRoute: route,
+    authenticationResult, // PaRes
+    authenticationTransactionId: threeDSData.authenticationTransactionId,
+    merchantData,
+    amount: paymentIntent.amount,
+    currency: paymentIntent.currency,
+  })
+
+  console.log(`[Router] 3DS authorization outcome: ${authorizeOutput.outcome}`, {
+    requestId,
+  })
+
+  // STEP 7: Handle authorization outcome
+  if (authorizeOutput.outcome === 'failed') {
+    // Authorization failed
+    console.log(`[Router] 3DS authorization failed`, {
+      requestId,
+      code: authorizeOutput.processorResponse?.code,
+      message: authorizeOutput.processorResponse?.message,
+    })
+
+    // Update PaymentIntent status to failed
+    const { data: failedPI } = await supabase
+      .from('payment_intents')
+      .update({ status: 'failed' })
+      .eq('id', paymentIntentId)
+      .select()
+      .single()
+
+    // Create charge record with failed status
+    const failedCharge = mapAuthorizeOutputToCharge(
+      authorizeOutput,
+      paymentIntent,
+      route
+    )
+
+    const { data: charge } = await supabase
+      .from('charges')
+      .insert(failedCharge)
+      .select()
+      .single()
+
+    // Emit events
+    await emitEvent({
+      supabase,
+      merchantId,
+      eventType: 'payment_intent.failed',
+      data: failedPI,
+      env,
+    }).catch((err) => console.error('[Router] Error emitting event:', err))
+
+    await emitEvent({
+      supabase,
+      merchantId,
+      eventType: 'charge.failed',
+      data: charge,
+      env,
+    }).catch((err) => console.error('[Router] Error emitting event:', err))
+
+    throw new Error(
+      authorizeOutput.processorResponse?.message || '3DS authentication failed'
+    )
+  }
+
+  // STEP 8: Authorization successful
+  console.log(`[Router] 3DS authorization successful`, {
+    requestId,
+    amountAuthorized: authorizeOutput.amountAuthorized,
+    authCode: authorizeOutput.authorizationCode,
+  })
+
+  // Create charge record
+  const chargeData = mapAuthorizeOutputToCharge(
+    authorizeOutput,
+    paymentIntent,
+    route
+  )
+
+  const { data: charge, error: chargeError } = await supabase
+    .from('charges')
+    .insert(chargeData)
+    .select()
+    .single()
+
+  if (chargeError || !charge) {
+    throw new Error(`Failed to create charge: ${chargeError?.message}`)
+  }
+
+  // Emit charge.authorized event
+  await emitEvent({
+    supabase,
+    merchantId,
+    eventType: 'charge.authorized',
+    data: charge,
+    env,
+  }).catch((err) => console.error('[Router] Error emitting event:', err))
+
+  // Update PaymentIntent status
+  const newStatus =
+    paymentIntent.capture_method === 'automatic' ? 'succeeded' : 'processing'
+
+  const { data: updatedPI } = await supabase
+    .from('payment_intents')
+    .update({ status: newStatus })
+    .eq('id', paymentIntentId)
+    .select()
+    .single()
+
+  console.log(`[Router] Payment intent 3DS authentication completed successfully`, {
+    requestId,
+    status: newStatus,
+    chargeId: charge.id,
+  })
+
+  // Emit event for webhooks
+  await emitEvent({
+    supabase,
+    merchantId,
+    eventType: 'payment_intent.succeeded',
+    data: updatedPI,
+    env,
+  }).catch((err) =>
+    console.error('[Router] Error emitting event:', err)
+  )
+
+  return {
+    paymentIntent: updatedPI,
+    charge,
   }
 }
 

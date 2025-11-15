@@ -298,9 +298,8 @@ export async function processPendingWebhooks(
   // Fetch pending deliveries
   const { data: deliveries, error } = await supabase
     .from('webhook_deliveries')
-    .select('id')
+    .select('id, max_attempts, attempt')
     .eq('delivered', false)
-    .lt('attempt', 'max_attempts')
     .or(`next_retry_at.is.null,next_retry_at.lt.${new Date().toISOString()}`)
     .order('created_at', { ascending: true })
     .limit(batchSize)
@@ -317,10 +316,15 @@ export async function processPendingWebhooks(
 
   console.log(`[Webhook Dispatcher] Found ${deliveries.length} pending deliveries`)
 
+  // Filter deliveries where attempt < max_attempts (must be done in code since Supabase can't compare columns)
+  const eligibleDeliveries = deliveries.filter(d => d.attempt < d.max_attempts)
+
+  console.log(`[Webhook Dispatcher] ${eligibleDeliveries.length} deliveries eligible for processing`)
+
   // Process each delivery sequentially
   // (Could be parallelized with Promise.all for better performance)
   let processed = 0
-  for (const delivery of deliveries) {
+  for (const delivery of eligibleDeliveries) {
     try {
       await dispatchWebhook(supabase, delivery.id)
       processed++

@@ -5,8 +5,9 @@
 
 import { Hono } from 'hono'
 import { CreateCustomerSchema, UpdateCustomerSchema } from '../schemas/canonical'
+import type { HonoContext } from '../types/hono'
 
-const app = new Hono()
+const app = new Hono<HonoContext>()
 
 // Create customer
 app.post('/', async (c) => {

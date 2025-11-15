@@ -79,6 +79,24 @@ export interface AcquirerAdapter {
   void?(input: CanonicalVoidInput): Promise<CanonicalVoidOutput>
 
   /**
+   * Completar autenticación 3DS (opcional, para acquirers con soporte 3DS)
+   *
+   * @param input - Datos de la autenticación 3DS
+   * @returns Resultado de la autorización
+   * @throws AdapterError si falla
+   */
+  authorizeWith3DS?(input: {
+    paymentIntentId: string
+    requestId: string
+    acquirerRoute: any
+    authenticationResult: string
+    authenticationTransactionId?: string
+    merchantData?: string
+    amount: number
+    currency: string
+  }): Promise<CanonicalAuthorizeOutput>
+
+  /**
    * Procesar webhook recibido del acquirer (opcional)
    *
    * Convierte el webhook raw del acquirer a eventos canónicos.

@@ -24,6 +24,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { createClient } from '@supabase/supabase-js'
 import type { PaymentIntent, Charge, Refund } from '../schemas/canonical'
 
 // ============================================================================
@@ -72,6 +73,10 @@ export type EmitEventParams = {
   merchantId: string
   eventType: EventType
   data: any // The object that triggered the event (PaymentIntent, Charge, etc.)
+  env?: {
+    SUPABASE_URL?: string
+    SUPABASE_SERVICE_ROLE_KEY?: string
+  }
 }
 
 // ============================================================================
@@ -91,7 +96,7 @@ export type EmitEventParams = {
  * @returns Event payload
  */
 export async function emitEvent(params: EmitEventParams): Promise<EventPayload> {
-  const { supabase, merchantId, eventType, data } = params
+  const { supabase, merchantId, eventType, data, env } = params
 
   console.log(`[Events] Emitting event: ${eventType}`, {
     merchantId,
@@ -109,25 +114,82 @@ export async function emitEvent(params: EmitEventParams): Promise<EventPayload> 
     },
   }
 
-  // STEP 2: Fetch merchant's webhooks subscribed to this event type
-  const { data: webhooks, error: webhooksError } = await supabase
+  // STEP 2: Create admin client for webhook queries (bypasses RLS)
+  // Use service role key if available, otherwise fall back to regular client
+  let adminClient = supabase
+  if (env?.SUPABASE_URL && env?.SUPABASE_SERVICE_ROLE_KEY) {
+    console.log('[Events] Using service role client for webhook queries')
+    adminClient = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false,
+      },
+    })
+  } else {
+    console.log('[Events] Warning: No service role key available, using regular client (RLS applies)')
+  }
+
+  // STEP 3: Fetch merchant's webhooks subscribed to this event type
+  console.log('[Events] Fetching webhooks for merchant:', {
+    merchantId,
+    eventType,
+  })
+
+  const { data: webhooks, error: webhooksError } = await adminClient
     .from('webhooks')
     .select('id, url, secret, events')
     .eq('merchant_id', merchantId)
     .eq('is_active', true)
 
   if (webhooksError) {
-    console.error('[Events] Error fetching webhooks:', webhooksError)
+    console.error('[Events] Error fetching webhooks:', {
+      error: webhooksError,
+      merchantId,
+      code: webhooksError.code,
+      message: webhooksError.message,
+      details: webhooksError.details,
+      hint: webhooksError.hint,
+    })
     // Don't throw - event emission failure shouldn't break the main flow
     return eventPayload
   }
 
+  console.log('[Events] Webhooks query result:', {
+    merchantId,
+    webhooksFound: webhooks?.length || 0,
+    webhooks: webhooks?.map(w => ({
+      id: w.id,
+      url: w.url,
+      events: w.events,
+      isActive: true,
+    })),
+  })
+
   if (!webhooks || webhooks.length === 0) {
     console.log('[Events] No active webhooks found for merchant', { merchantId })
+
+    // Debug: Try to find ANY webhooks for this merchant (without is_active filter)
+    const { data: allWebhooks, error: debugError } = await adminClient
+      .from('webhooks')
+      .select('id, url, secret, events, is_active')
+      .eq('merchant_id', merchantId)
+
+    console.log('[Events] Debug - All webhooks for merchant:', {
+      merchantId,
+      allWebhooksCount: allWebhooks?.length || 0,
+      allWebhooks: allWebhooks?.map(w => ({
+        id: w.id,
+        url: w.url,
+        events: w.events,
+        isActive: w.is_active,
+      })),
+      debugError,
+    })
+
     return eventPayload
   }
 
-  // STEP 3: Filter webhooks subscribed to this event type
+  // STEP 4: Filter webhooks subscribed to this event type
   const subscribedWebhooks = webhooks.filter(
     (webhook) =>
       webhook.events.includes(eventType) || webhook.events.includes('*') // Support wildcard
@@ -145,10 +207,10 @@ export async function emitEvent(params: EmitEventParams): Promise<EventPayload> 
     { eventType, merchantId }
   )
 
-  // STEP 4: Create webhook_deliveries records
+  // STEP 5: Create webhook_deliveries records
   const deliveries = subscribedWebhooks.map((webhook) => ({
     merchant_id: merchantId,
-    webhook_id: webhook.id,
+    // Note: webhook_deliveries table doesn't have webhook_id column, only event_id
     event_type: eventType,
     event_id: eventId,
     endpoint_url: webhook.url,

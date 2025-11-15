@@ -69,6 +69,7 @@ type CyberSourceAuthRequest = {
   processingInformation: {
     capture?: boolean // true = auth + capture, false = auth only
     commerceIndicator?: string // For 3DS: 'internet' or 'moto'
+    authenticationIndicator?: string // '01' enables 3DS
   }
   orderInformation: {
     amountDetails: {
@@ -96,18 +97,25 @@ type CyberSourceAuthRequest = {
     }
   }
   consumerAuthenticationInformation?: {
-    // For 3DS
+    // For 3DS enrollment check and authentication
+    returnUrl?: string // Where to return after 3DS challenge
     cavv?: string
     eciRaw?: string
     paresStatus?: string
     veresEnrolled?: string
     xid?: string
   }
+  payerAuthenticationInformation?: {
+    // Request 3DS enrollment check
+    payerAuthEnrollService?: {
+      run?: string
+    }
+  }
 }
 
 type CyberSourceAuthResponse = {
   id: string // Transaction ID
-  status: 'AUTHORIZED' | 'DECLINED' | 'INVALID_REQUEST' | 'PENDING_AUTHENTICATION'
+  status: 'AUTHORIZED' | 'AUTHORIZED_PENDING_REVIEW' | 'PENDING_REVIEW' | 'DECLINED' | 'INVALID_REQUEST' | 'PENDING_AUTHENTICATION'
   submitTimeUtc: string
   clientReferenceInformation?: {
     code: string
@@ -179,6 +187,7 @@ export const cyberSourceAdapter: AcquirerAdapter = {
       processingInformation: {
         capture: false, // Authorization only (capture later)
         commerceIndicator: 'internet',
+        authenticationIndicator: '01', // Enable 3DS authentication
       },
       orderInformation: {
         amountDetails: {
@@ -207,13 +216,29 @@ export const cyberSourceAdapter: AcquirerAdapter = {
       },
     }
 
-    // Add 3DS information if present
+    // Add 3DS information if already authenticated
     if (input.threeDS?.cavv) {
       csRequest.consumerAuthenticationInformation = {
         cavv: input.threeDS.cavv,
         eciRaw: input.threeDS.eci,
       }
+    } else {
+      // Request 3DS enrollment check for new transactions
+      csRequest.consumerAuthenticationInformation = {
+        returnUrl: 'https://elements.deonpay.mx/3ds-return', // Where to return after 3DS
+      }
+      csRequest.payerAuthenticationInformation = {
+        payerAuthEnrollService: {
+          run: 'true', // Request 3DS enrollment check
+        },
+      }
     }
+
+    console.log('[CyberSource Adapter] 3DS configuration:', {
+      has3DSData: !!input.threeDS?.cavv,
+      requestingEnrollment: !input.threeDS?.cavv,
+      authenticationIndicator: csRequest.processingInformation.authenticationIndicator,
+    })
 
     // Prepare headers
     const requestBody = JSON.stringify(csRequest)
@@ -287,7 +312,7 @@ export const cyberSourceAdapter: AcquirerAdapter = {
       })
 
       // Map to canonical format based on status
-      if (csResponse.status === 'AUTHORIZED') {
+      if (csResponse.status === 'AUTHORIZED' || csResponse.status === 'AUTHORIZED_PENDING_REVIEW' || csResponse.status === 'PENDING_REVIEW') {
         return {
           outcome: 'authorized',
           amountAuthorized: input.amount,
@@ -296,7 +321,7 @@ export const cyberSourceAdapter: AcquirerAdapter = {
           network: mapCardNetwork(input.paymentMethod.network),
           processorResponse: {
             code: csResponse.processorInformation?.responseCode || '00',
-            message: 'Authorized',
+            message: csResponse.status === 'AUTHORIZED' ? 'Authorized' : 'Authorized - Pending Review',
             avs: csResponse.processorInformation?.avs?.code,
             cvv: csResponse.processorInformation?.cardVerification?.resultCode,
           },
@@ -562,6 +587,142 @@ export const cyberSourceAdapter: AcquirerAdapter = {
     } catch (error: any) {
       console.error('[CyberSource Adapter] Void error:', error)
       throw new Error(`CyberSource void error: ${error.message}`)
+    }
+  },
+
+  /**
+   * Complete 3DS authentication with CyberSource
+   *
+   * API ENDPOINT: POST /pts/v2/payments
+   * DOC: https://developer.cybersource.com/api-reference-assets/index.html#payments_payments_process-a-payment
+   */
+  async authorizeWith3DS(input: {
+    paymentIntentId: string
+    requestId: string
+    acquirerRoute: any
+    authenticationResult: string // PaRes
+    authenticationTransactionId?: string
+    merchantData?: string
+    amount: number
+    currency: string
+  }): Promise<CanonicalAuthorizeOutput> {
+    console.log(
+      `[CyberSource Adapter] Completing 3DS authentication for PI ${input.paymentIntentId}`,
+      {
+        requestId: input.requestId,
+        amount: input.amount,
+        currency: input.currency,
+        hasAuthTransactionId: !!input.authenticationTransactionId,
+      }
+    )
+
+    // Extract configuration
+    const config = extractConfig({
+      acquirerRoute: input.acquirerRoute,
+    } as any)
+
+    // Build CyberSource request with 3DS authentication data
+    const csRequest = {
+      clientReferenceInformation: {
+        code: input.paymentIntentId,
+      },
+      processingInformation: {
+        capture: false, // Authorization only (capture later)
+        commerceIndicator: 'internet',
+      },
+      orderInformation: {
+        amountDetails: {
+          totalAmount: (input.amount / 100).toFixed(2),
+          currency: input.currency.toUpperCase(),
+        },
+      },
+      consumerAuthenticationInformation: {
+        authenticationTransactionId: input.authenticationTransactionId,
+        paSpecificationVersion: '1.0.2', // or '2.1.0' for 3DS 2.0
+        paRes: input.authenticationResult,
+      },
+    }
+
+    // Prepare headers
+    const requestBody = JSON.stringify(csRequest)
+    const date = new Date().toUTCString()
+    const path = '/pts/v2/payments'
+    const digest = await generateDigest(requestBody)
+    const signature = await generateCyberSourceSignature('POST', path, date, digest, config)
+
+    // Make HTTP POST request to CyberSource
+    try {
+      console.log('[CyberSource Adapter] Making 3DS completion request to CyberSource:', {
+        endpoint: config.endpoint + path,
+        merchantId: config.merchantId,
+      })
+
+      const response = await fetch(`${config.endpoint}${path}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'v-c-merchant-id': config.merchantId,
+          'Date': date,
+          'Host': config.runEnvironment,
+          'Digest': digest,
+          'Signature': signature,
+        },
+        body: requestBody,
+      })
+
+      const responseText = await response.text()
+      console.log('[CyberSource Adapter] Raw 3DS response:', {
+        status: response.status,
+        statusText: response.statusText,
+        body: responseText,
+      })
+
+      let csResponse: CyberSourceAuthResponse
+      try {
+        csResponse = JSON.parse(responseText)
+      } catch (e) {
+        console.error('[CyberSource Adapter] Failed to parse 3DS response as JSON:', responseText)
+        throw new Error(`Invalid JSON response from CyberSource: ${responseText}`)
+      }
+
+      console.log('[CyberSource Adapter] 3DS Response:', {
+        status: csResponse.status,
+        id: csResponse.id,
+      })
+
+      // Map to canonical format based on status
+      if (csResponse.status === 'AUTHORIZED' || csResponse.status === 'AUTHORIZED_PENDING_REVIEW' || csResponse.status === 'PENDING_REVIEW') {
+        return {
+          outcome: 'authorized',
+          amountAuthorized: input.amount,
+          acquirerReference: csResponse.id,
+          authorizationCode: csResponse.processorInformation?.approvalCode,
+          network: 'UNKNOWN', // We don't have card data in 3DS completion
+          processorResponse: {
+            code: csResponse.processorInformation?.responseCode || '00',
+            message: csResponse.status === 'AUTHORIZED' ? 'Authorized after 3DS' : 'Authorized after 3DS - Pending Review',
+            avs: csResponse.processorInformation?.avs?.code,
+            cvv: csResponse.processorInformation?.cardVerification?.resultCode,
+          },
+          vendorRaw: csResponse,
+        }
+      }
+
+      // DECLINED or other failure
+      return {
+        outcome: 'failed',
+        processorResponse: {
+          code: csResponse.processorInformation?.responseCode || 'error',
+          message:
+            csResponse.errorInformation?.message ||
+            csResponse.processorInformation?.responseCode ||
+            '3DS authentication declined',
+        },
+        vendorRaw: csResponse,
+      }
+    } catch (error: any) {
+      console.error('[CyberSource Adapter] 3DS completion error:', error)
+      throw new Error(`CyberSource 3DS API error: ${error.message}`)
     }
   },
 

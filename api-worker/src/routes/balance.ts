@@ -4,8 +4,9 @@
  */
 
 import { Hono } from 'hono'
+import type { HonoContext } from '../types/hono'
 
-const app = new Hono()
+const app = new Hono<HonoContext>()
 
 // Get balance transaction
 app.get('/transactions/:id', async (c) => {

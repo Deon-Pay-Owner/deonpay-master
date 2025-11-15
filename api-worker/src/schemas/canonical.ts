@@ -155,16 +155,22 @@ export const UpdatePaymentIntentSchema = z.object({
 })
 
 export const ConfirmPaymentIntentSchema = z.object({
-  payment_method: z.object({
-    type: z.literal('card'),
-    number: z.string().regex(/^\d{13,19}$/, 'Invalid card number'),
-    exp_month: z.number().int().min(1).max(12),
-    exp_year: z.number().int().min(2024),
-    cvv: z.string().regex(/^\d{3,4}$/, 'Invalid CVV'),
-  }),
+  payment_method: z.union([
+    // Token string (tok_xxx)
+    z.string().startsWith('tok_', 'Token must start with tok_'),
+    // Raw card data object
+    z.object({
+      type: z.literal('card'),
+      number: z.string().regex(/^\d{13,19}$/, 'Invalid card number'),
+      exp_month: z.number().int().min(1).max(12),
+      exp_year: z.number().int().min(2024),
+      cvv: z.string().regex(/^\d{3,4}$/, 'Invalid CVV'),
+    })
+  ]),
   billing_details: z.object({
     name: z.string().optional(),
     email: z.string().email().optional(),
+    phone: z.string().optional(),
     address: z.object({
       line1: z.string().optional(),
       line2: z.string().optional(),

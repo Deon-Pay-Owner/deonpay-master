@@ -14,8 +14,10 @@ import { confirmPaymentIntent, captureCharge } from '../router'
 import { processRawCardData } from '../utils/card'
 import { emitEvent } from '../router/events'
 import { consumeToken } from '../lib/encryption/tokens'
+import { validateCard } from '../utils/cardValidation'
+import type { HonoContext } from '../types/hono'
 
-const app = new Hono()
+const app = new Hono<HonoContext>()
 
 /**
  * Generate a random string for client_secret
@@ -66,6 +68,10 @@ app.post('/', async (c) => {
       merchantId,
       eventType: 'payment_intent.created',
       data,
+      env: {
+        SUPABASE_URL: c.env.SUPABASE_URL,
+        SUPABASE_SERVICE_ROLE_KEY: c.env.SUPABASE_SERVICE_ROLE_KEY,
+      },
     }).catch((err) => console.error('[PaymentIntents] Error emitting event:', err))
 
     return c.json({
@@ -292,9 +298,37 @@ app.post('/:id/confirm', async (c) => {
 
       // Process for display
       processedPaymentMethod = processRawCardData(actualCardData)
-    } else {
-      // It's raw card data
+    } else if (typeof rawPaymentMethod === 'object') {
+      // It's raw card data object
       processedPaymentMethod = processRawCardData(rawPaymentMethod)
+      actualCardData = rawPaymentMethod
+    } else {
+      // Invalid payment method
+      return c.json({
+        error: {
+          type: 'invalid_request_error',
+          message: 'Invalid payment method format',
+          code: 'invalid_payment_method',
+        }
+      }, 400)
+    }
+
+    // Validate card data (Luhn algorithm, expiry date, CVV)
+    const validation = validateCard({
+      number: actualCardData.number,
+      exp_month: actualCardData.exp_month,
+      exp_year: actualCardData.exp_year,
+      cvv: actualCardData.cvv,
+    })
+
+    if (!validation.valid) {
+      return c.json({
+        error: {
+          type: 'card_error',
+          message: validation.errors.join(', '),
+          code: 'invalid_card',
+        }
+      }, 400)
     }
 
     // Update payment intent with processed payment method (for display only - NOT the full card data)
@@ -326,6 +360,8 @@ app.post('/:id/confirm', async (c) => {
       billingDetails: billing_details,   // Pass billing details to router
       env: {
         DEFAULT_ADAPTER: c.env.DEFAULT_ADAPTER || 'mock',
+        SUPABASE_URL: c.env.SUPABASE_URL,
+        SUPABASE_SERVICE_ROLE_KEY: c.env.SUPABASE_SERVICE_ROLE_KEY,
       },
     })
 
@@ -422,6 +458,8 @@ app.post('/:id/capture', async (c) => {
       amountToCapture: amount_to_capture,
       env: {
         DEFAULT_ADAPTER: c.env.DEFAULT_ADAPTER || 'mock',
+        SUPABASE_URL: c.env.SUPABASE_URL,
+        SUPABASE_SERVICE_ROLE_KEY: c.env.SUPABASE_SERVICE_ROLE_KEY,
       },
     })
 
@@ -434,6 +472,91 @@ app.post('/:id/capture', async (c) => {
       error: {
         type: 'api_error',
         message: error.message || 'Failed to capture payment',
+      }
+    }, 500)
+  }
+})
+
+// ============================================================================
+// POST /api/v1/payment_intents/:id/complete_authentication - Complete 3DS authentication
+// ============================================================================
+app.post('/:id/complete_authentication', async (c) => {
+  try {
+    const merchantId = c.get('merchantId')
+    const supabase = c.get('supabase')
+    const requestId = c.get('requestId')
+    const id = c.req.param('id')
+    const body = await c.req.json()
+
+    // Extract 3DS authentication result
+    const { authentication_result, MD } = body
+
+    if (!authentication_result) {
+      return c.json({
+        error: {
+          type: 'invalid_request_error',
+          message: 'authentication_result (PaRes) is required',
+          code: 'missing_parameter',
+        }
+      }, 400)
+    }
+
+    // Get payment intent
+    const { data: paymentIntent } = await supabase
+      .from('payment_intents')
+      .select('*')
+      .eq('id', id)
+      .eq('merchant_id', merchantId)
+      .single()
+
+    if (!paymentIntent) {
+      return c.json({
+        error: {
+          type: 'invalid_request_error',
+          message: 'Payment intent not found',
+          code: 'resource_not_found',
+        }
+      }, 404)
+    }
+
+    // Verify payment intent is in requires_action status
+    if (paymentIntent.status !== 'requires_action') {
+      return c.json({
+        error: {
+          type: 'invalid_request_error',
+          message: `Payment intent is in ${paymentIntent.status} status, expected requires_action`,
+          code: 'invalid_state',
+        }
+      }, 400)
+    }
+
+    // Import completeAuthentication from router
+    const { completeAuthentication } = await import('../router')
+
+    // Call router to complete 3DS authentication
+    const result = await completeAuthentication({
+      supabase,
+      paymentIntentId: id,
+      merchantId,
+      requestId,
+      authenticationResult: authentication_result,
+      merchantData: MD,
+      env: {
+        DEFAULT_ADAPTER: c.env.DEFAULT_ADAPTER || 'mock',
+        SUPABASE_URL: c.env.SUPABASE_URL,
+        SUPABASE_SERVICE_ROLE_KEY: c.env.SUPABASE_SERVICE_ROLE_KEY,
+      },
+    })
+
+    return c.json(result.paymentIntent)
+
+  } catch (error: any) {
+    console.error('[Payment Intents] Complete authentication error:', error)
+
+    return c.json({
+      error: {
+        type: 'api_error',
+        message: error.message || 'Failed to complete authentication',
       }
     }, 500)
   }

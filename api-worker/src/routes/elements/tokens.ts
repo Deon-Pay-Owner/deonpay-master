@@ -6,8 +6,9 @@
 import { Hono } from 'hono'
 import { encryptAES } from '../../lib/encryption/aes'
 import { detectCardBrand } from '../../utils/card'
+import type { HonoContext } from '../../types/hono'
 
-const app = new Hono()
+const app = new Hono<HonoContext>()
 
 // ============================================================================
 // POST /api/v1/elements/tokens - Create card token
