@@ -1,5 +1,5 @@
 -- API Keys Management System for DeonPay
--- This migration creates the api_keys table for managing merchant API keys
+-- This migration creates/updates the api_keys table for managing merchant API keys
 
 -- Enable necessary extensions
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
@@ -8,7 +8,11 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 -- API KEYS TABLE
 -- ============================================================================
 
-CREATE TABLE IF NOT EXISTS api_keys (
+-- Drop existing table if it exists (to start fresh)
+DROP TABLE IF EXISTS api_keys CASCADE;
+
+-- Create api_keys table from scratch
+CREATE TABLE api_keys (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   merchant_id UUID NOT NULL REFERENCES merchants(id) ON DELETE CASCADE,
 
