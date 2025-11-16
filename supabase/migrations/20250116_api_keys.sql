@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS api_keys (
   name TEXT, -- Optional name/label for the key
 
   -- Status
-  active BOOLEAN NOT NULL DEFAULT true,
+  is_active BOOLEAN NOT NULL DEFAULT true,
   last_used_at TIMESTAMP WITH TIME ZONE,
 
   -- Security
@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS api_keys (
 
 -- Create indexes
 CREATE INDEX IF NOT EXISTS idx_api_keys_merchant_id ON api_keys(merchant_id);
-CREATE INDEX IF NOT EXISTS idx_api_keys_key ON api_keys(key) WHERE active = true;
+CREATE INDEX IF NOT EXISTS idx_api_keys_key ON api_keys(key) WHERE is_active = true;
 CREATE INDEX IF NOT EXISTS idx_api_keys_type ON api_keys(type);
 
 -- ============================================================================
@@ -122,7 +122,7 @@ BEGIN
   v_key := v_prefix || v_random;
 
   -- Insert the new key
-  INSERT INTO api_keys (merchant_id, key, type, name, key_prefix, active)
+  INSERT INTO api_keys (merchant_id, key, type, name, key_prefix, is_active)
   VALUES (p_merchant_id, v_key, p_type, p_name, v_prefix, true);
 
   RETURN v_key;
