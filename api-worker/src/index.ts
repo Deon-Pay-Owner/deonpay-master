@@ -23,6 +23,9 @@ import { refundsRouter } from './routes/refunds'
 import { balanceRouter } from './routes/balance'
 import { elementsTokensRouter } from './routes/elements/tokens'
 import { webhooksRouter } from './routes/webhooks'
+import { productsRouter } from './routes/products'
+import { checkoutRouter } from './routes/checkout'
+import { paymentLinksRouter } from './routes/payment-links'
 
 // Import and register adapters
 import { registerAdapter } from './router/adapters'
@@ -221,6 +224,9 @@ app.route('/api/v1/refunds', refundsRouter)
 app.route('/api/v1/balance', balanceRouter)
 app.route('/api/v1/elements/tokens', elementsTokensRouter)
 app.route('/api/v1/webhooks', webhooksRouter)
+app.route('/api/v1/products', productsRouter)
+app.route('/api/v1/checkout', checkoutRouter)
+app.route('/api/v1/payment_links', paymentLinksRouter)
 
 // ============================================================================
 // ERROR HANDLING
