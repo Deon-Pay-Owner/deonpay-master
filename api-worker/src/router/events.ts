@@ -52,6 +52,10 @@ export type EventType =
   | 'refund.created'
   | 'refund.succeeded'
   | 'refund.failed'
+  // Customer events
+  | 'customer.created'
+  | 'customer.updated'
+  | 'customer.deleted'
 
 /**
  * Event payload structure
@@ -331,5 +335,53 @@ export async function emitRefundSucceeded(
     merchantId,
     eventType: 'refund.succeeded',
     data: refund,
+  })
+}
+
+/**
+ * Emit customer.created event
+ */
+export async function emitCustomerCreated(
+  supabase: SupabaseClient,
+  merchantId: string,
+  customer: any
+): Promise<void> {
+  await emitEvent({
+    supabase,
+    merchantId,
+    eventType: 'customer.created',
+    data: customer,
+  })
+}
+
+/**
+ * Emit customer.updated event
+ */
+export async function emitCustomerUpdated(
+  supabase: SupabaseClient,
+  merchantId: string,
+  customer: any
+): Promise<void> {
+  await emitEvent({
+    supabase,
+    merchantId,
+    eventType: 'customer.updated',
+    data: customer,
+  })
+}
+
+/**
+ * Emit customer.deleted event
+ */
+export async function emitCustomerDeleted(
+  supabase: SupabaseClient,
+  merchantId: string,
+  customer: any
+): Promise<void> {
+  await emitEvent({
+    supabase,
+    merchantId,
+    eventType: 'customer.deleted',
+    data: customer,
   })
 }
