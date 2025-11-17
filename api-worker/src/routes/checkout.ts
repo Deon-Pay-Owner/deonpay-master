@@ -477,7 +477,7 @@ app.get('/sessions/by-url/:url_key', async (c) => {
     const supabase = c.get('supabase')
     const urlKey = c.req.param('url_key')
 
-    // Get checkout session with line items
+    // Get checkout session with line items and merchant API keys
     const { data: session, error } = await supabase
       .from('checkout_sessions')
       .select(`
@@ -504,6 +504,15 @@ app.get('/sessions/by-url/:url_key', async (c) => {
       }, 404)
     }
 
+    // Get merchant's public key from api_keys table
+    const { data: apiKey } = await supabase
+      .from('api_keys')
+      .select('public_key')
+      .eq('merchant_id', session.merchant_id)
+      .eq('environment', 'production')
+      .eq('active', true)
+      .single()
+
     // Check if session has expired
     if (new Date(session.expires_at) < new Date()) {
       // Update status to expired
@@ -523,11 +532,13 @@ app.get('/sessions/by-url/:url_key', async (c) => {
     // Don't expose sensitive merchant data to public
     const publicSession = {
       id: session.id,
+      url_key: session.url_key,
       mode: session.mode,
       currency: session.currency,
       amount_total: session.amount_total,
       amount_subtotal: session.amount_subtotal,
       amount_tax: session.amount_tax,
+      client_secret: session.client_secret,
       line_items: session.line_items,
       billing_address_collection: session.billing_address_collection,
       shipping_address_collection: session.shipping_address_collection,
@@ -535,7 +546,12 @@ app.get('/sessions/by-url/:url_key', async (c) => {
       custom_fields: session.custom_fields,
       consent_collection: session.consent_collection,
       locale: session.locale,
-      merchant: session.merchant,
+      status: session.status,
+      customer_email: session.customer_email,
+      merchant: {
+        ...session.merchant,
+        public_key: apiKey?.public_key || null
+      },
       expires_at: session.expires_at,
     }
 
