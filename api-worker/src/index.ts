@@ -102,6 +102,27 @@ app.use('*', async (c, next) => {
 
 // API Key authentication middleware
 app.use('/api/v1/*', async (c, next) => {
+  // Skip authentication for public endpoints
+  const path = c.req.path
+  const publicEndpoints = [
+    '/api/v1/checkout/sessions/by-url/'  // Public endpoint for fetching session by URL key
+  ]
+
+  // Also check for complete endpoint pattern (sessions/:id/complete)
+  const isCompleteEndpoint = /^\/api\/v1\/checkout\/sessions\/[^\/]+\/complete$/.test(path)
+
+  // Check if the current path is a public endpoint
+  const isPublicEndpoint = publicEndpoints.some(endpoint =>
+    path.includes(endpoint)
+  ) || isCompleteEndpoint
+
+  if (isPublicEndpoint) {
+    // For public endpoints, set a minimal context without authentication
+    c.set('merchantId', '')  // Empty merchant ID for public routes
+    c.set('apiKey', null)
+    return next()
+  }
+
   const authHeader = c.req.header('Authorization')
 
   if (!authHeader) {

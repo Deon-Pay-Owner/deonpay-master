@@ -232,13 +232,21 @@ export default async function PaymentLinkPage({
         ...search
       }
     })
-    .select()
+    .select('*')  // Select all fields including url_key
     .single()
 
   if (sessionError || !checkoutSession) {
     console.error('Error creating checkout session:', sessionError)
     throw new Error('Failed to create checkout session')
   }
+
+  // Log the session details for debugging
+  console.log('[Payment Link] Created checkout session:', {
+    id: checkoutSession.id,
+    url_key: checkoutSession.url_key,
+    merchant_id: checkoutSession.merchant_id,
+    payment_link_id: paymentLink.id
+  })
 
   // Insert line items
   if (sessionLineItems.length > 0) {
@@ -268,6 +276,12 @@ export default async function PaymentLinkPage({
       })
   } catch (error) {
     console.warn('[Payment Link] Could not track analytics:', error)
+  }
+
+  // Ensure we have a url_key before redirecting
+  if (!checkoutSession.url_key) {
+    console.error('[Payment Link] No url_key in checkout session:', checkoutSession)
+    throw new Error('Checkout session missing url_key')
   }
 
   // Redirect to checkout page

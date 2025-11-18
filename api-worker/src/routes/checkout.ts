@@ -509,8 +509,8 @@ app.get('/sessions/by-url/:url_key', async (c) => {
       .from('api_keys')
       .select('public_key')
       .eq('merchant_id', session.merchant_id)
-      .eq('environment', 'production')
-      .eq('active', true)
+      .eq('key_type', 'public')
+      .eq('is_active', true)
       .single()
 
     // Check if session has expired
