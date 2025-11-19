@@ -66,11 +66,32 @@ const app = new Hono<{ Bindings: Bindings; Variables: Variables }>()
 // ============================================================================
 
 // CORS - Allow all origins for now (restrict in production)
-app.use('*', cors({
-  origin: '*',
-  allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key', 'X-Request-ID'],
-}))
+ const ALLOWED_ORIGINS = [
+    'https://dashboard.deonpay.mx',
+    'https://link.deonpay.mx',
+    'https://deonpay.mx',
+    'https://hub.deonpay.mx',
+  ]
+
+  app.use('*', cors({
+    origin: (origin, c) => {
+      if (c.env.ENVIRONMENT === 'development') return '*'
+      return ALLOWED_ORIGINS.includes(origin) ? origin : null
+    },
+    credentials: true,
+    allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+    allowHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key', 'X-Request-ID'],
+    exposeHeaders: ['X-Request-ID', 'Idempotency-Replayed', 'X-RateLimit-Limit', 'X-RateLimit-Remaining'],
+  }))
+
+  // Add security headers
+  app.use('*', async (c, next) => {
+    await next()
+    c.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload')
+    c.header('X-Content-Type-Options', 'nosniff')
+    c.header('X-Frame-Options', 'DENY')
+    c.header('X-XSS-Protection', '1; mode=block')
+  })
 
 // Logger
 app.use('*', logger())

@@ -477,6 +477,8 @@ app.get('/sessions/by-url/:url_key', async (c) => {
     const supabase = c.get('supabase')
     const urlKey = c.req.param('url_key')
 
+    console.log('[Checkout] Looking up session by url_key:', { urlKey })
+
     // Get checkout session with line items and merchant API keys
     const { data: session, error } = await supabase
       .from('checkout_sessions')
@@ -486,7 +488,6 @@ app.get('/sessions/by-url/:url_key', async (c) => {
         merchant:merchants(
           id,
           name,
-          logo_url,
           support_email,
           support_phone
         )
@@ -496,6 +497,14 @@ app.get('/sessions/by-url/:url_key', async (c) => {
       .single()
 
     if (error || !session) {
+      console.error('[Checkout] Session lookup failed:', {
+        urlKey,
+        error,
+        errorMessage: error?.message,
+        errorDetails: error?.details,
+        errorHint: error?.hint,
+        errorCode: error?.code,
+      })
       return c.json({
         error: {
           type: 'invalid_request_error',
@@ -504,14 +513,34 @@ app.get('/sessions/by-url/:url_key', async (c) => {
       }, 404)
     }
 
+    console.log('[Checkout] Session found:', {
+      id: session.id,
+      url_key: session.url_key,
+      merchant_id: session.merchant_id,
+      has_client_secret: !!session.client_secret,
+      line_items_count: session.line_items?.length || 0
+    })
+
     // Get merchant's public key from api_keys table
-    const { data: apiKey } = await supabase
+    const { data: apiKey, error: keyError } = await supabase
       .from('api_keys')
       .select('public_key')
       .eq('merchant_id', session.merchant_id)
       .eq('key_type', 'public')
       .eq('is_active', true)
       .single()
+
+    if (keyError) {
+      console.warn('[Checkout] Failed to fetch public key:', {
+        merchant_id: session.merchant_id,
+        error: keyError
+      })
+    }
+
+    console.log('[Checkout] API Key lookup:', {
+      merchant_id: session.merchant_id,
+      has_public_key: !!apiKey?.public_key
+    })
 
     // Check if session has expired
     if (new Date(session.expires_at) < new Date()) {

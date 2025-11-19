@@ -5,6 +5,7 @@
 
 import { Hono } from 'hono'
 import { encryptAES } from '../../lib/encryption/aes'
+import { validateEncryptionKey } from '../../lib/encryption/validation'
 import { detectCardBrand } from '../../utils/card'
 import type { HonoContext } from '../../types/hono'
 
@@ -61,8 +62,8 @@ app.post('/', async (c) => {
       brand,
     }
 
-    // Encrypt card data (use environment variable for encryption key)
-    const encryptionKey = c.env.ENCRYPTION_KEY || 'default-dev-key-change-in-production'
+    // Encrypt card data (validate encryption key first)
+    const encryptionKey = validateEncryptionKey(c.env.ENCRYPTION_KEY)
     const encryptedCard = await encryptAES(JSON.stringify(cardData), encryptionKey)
 
     // Store token in KV with 15-minute TTL
