@@ -166,11 +166,10 @@ function generateUrlKey(): string {
  * Generate QR code URL
  */
 function generateQRCodeUrl(paymentLinkUrl: string): string {
-  // Using Google Charts API for QR code generation
-  // In production, consider using a dedicated QR service or library
-  const size = 500
+  // Using QR Server API for QR code generation
+  const size = 400
   const encodedUrl = encodeURIComponent(paymentLinkUrl)
-  return `https://chart.googleapis.com/chart?chs=${size}x${size}&cht=qr&chl=${encodedUrl}&choe=UTF-8`
+  return `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&format=png&data=${encodedUrl}`
 }
 
 /**
@@ -262,10 +261,9 @@ app.post('/', async (c) => {
     }
 
     // Generate URLs
-    const baseUrl = c.env.PAYMENT_LINK_BASE_URL || 'https://pay.deonpay.mx'
-    const linkUrl = validatedData.custom_url
-      ? `${baseUrl}/l/${validatedData.custom_url}`
-      : `${baseUrl}/link/${urlKey}`
+    // Use custom_url if available, otherwise use payment link ID
+    const urlSlug = validatedData.custom_url || paymentLink.id
+    const linkUrl = `https://link.deonpay.mx/${urlSlug}`
 
     // Generate QR code URL
     const qrCodeUrl = generateQRCodeUrl(linkUrl)
