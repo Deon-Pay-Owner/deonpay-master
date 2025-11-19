@@ -67,19 +67,60 @@ app.get('/', async (c) => {
   try {
     const merchantId = c.get('merchantId')
     const supabase = c.get('supabase')
-    const limit = parseInt(c.req.query('limit') || '10')
+    const limit = parseInt(c.req.query('limit') || '50')
     const offset = parseInt(c.req.query('offset') || '0')
+    const search = c.req.query('search') || ''
 
-    const { data, error, count } = await supabase
+    // Build query
+    let query = supabase
       .from('customers')
       .select('*', { count: 'exact' })
       .eq('merchant_id', merchantId)
+      .eq('deleted', false)
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1)
 
+    // Apply search filter if provided
+    if (search) {
+      query = query.or(`email.ilike.%${search}%,name.ilike.%${search}%,phone.ilike.%${search}%`)
+    }
+
+    const { data, error, count } = await query
+
     if (error) throw new Error(error.message)
 
-    return c.json({ object: 'list', data: data || [], has_more: (count || 0) > offset + limit, total_count: count || 0 })
+    // Get aggregated stats
+    const { data: stats } = await supabase
+      .from('customers')
+      .select('transaction_count, created_at')
+      .eq('merchant_id', merchantId)
+      .eq('deleted', false)
+
+    const totalCustomers = count || 0
+    const activeCustomers = stats?.filter(c => c.transaction_count > 0).length || 0
+
+    // Calculate new customers this month
+    const now = new Date()
+    const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
+    const newThisMonth = stats?.filter(c =>
+      new Date(c.created_at) >= firstDayOfMonth
+    ).length || 0
+
+    return c.json({
+      object: 'list',
+      data: data || [],
+      has_more: (count || 0) > offset + limit,
+      pagination: {
+        total: totalCustomers,
+        limit,
+        offset
+      },
+      stats: {
+        total: totalCustomers,
+        active: activeCustomers,
+        newThisMonth
+      }
+    })
   } catch (error: any) {
     return c.json({ error: { type: 'api_error', message: error.message } }, 500)
   }
