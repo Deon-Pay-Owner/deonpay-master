@@ -76,7 +76,6 @@ app.get('/', async (c) => {
       .from('customers')
       .select('*', { count: 'exact' })
       .eq('merchant_id', merchantId)
-      .eq('deleted', false)
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1)
 
@@ -94,7 +93,6 @@ app.get('/', async (c) => {
       .from('customers')
       .select('transaction_count, created_at')
       .eq('merchant_id', merchantId)
-      .eq('deleted', false)
 
     const totalCustomers = count || 0
     const activeCustomers = stats?.filter(c => c.transaction_count > 0).length || 0
