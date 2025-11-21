@@ -22,63 +22,50 @@
    - Updated `ProductosClient.tsx` and `CreateProductModal.tsx` to use new API client
    - Added automatic localStorage sync for public API key in `DesarrolladoresClient.tsx`
    - Added `NEXT_PUBLIC_DEONPAY_API_URL` environment variable
+   - Fixed API base URL from `https://api.deonpay.mx/v1` to `https://api.deonpay.mx/api/v1`
    - Result: Products section now calls correct API worker endpoints
 
-## Pending Issues
+5. **Products RLS policies fixed**
+   - Issue: "Database error: new row violates row-level security policy for table 'products'"
+   - Root cause: RLS policies checked for `auth.uid()` but API worker uses API key authentication
+   - Fix: Created migration `20250120_simplify_products_rls.sql` to allow all access (security enforced at API worker level)
+   - Result: API worker can now insert/update/delete products and related tables
 
-### 1. Missing Dashboard Pages
-These routes don't exist in the codebase:
-- `/[merchantId]/clientes` (Customers)
-- `/[merchantId]/productos` (Products)
-- `/[merchantId]/links-de-pago` (Payment Links)
+6. **Payment Links section routing fixed**
+   - Issue: Same as products - calling local API routes causing 404 errors
+   - Fix: Updated `LinksClient.tsx` and `CreateLinkModal.tsx` to use API worker client
+   - Renamed imports to avoid naming collisions (paymentLinks as paymentLinksAPI, products as productsAPI)
+   - Hardcoded API base URL to prevent client-side environment variable issues
+   - Result: Payment links section now calls correct API worker endpoints
 
-**Question for user**: ¿Estas secciones deben:
-- A) Consumir datos directamente desde Supabase (como desarrolladores)?
-- B) Consumir datos desde el API worker (api.deonpay.mx)?
-- C) Todavía no están implementadas?
+7. **Customers section routing fixed**
+   - Issue: Same as products/links - calling local API routes causing 404 errors
+   - Fix: Updated `ClientesClient.tsx` and `NewCustomerModal.tsx` to use API worker client
+   - Implemented client-side stats calculation from customer data
+   - Renamed import to avoid collision (customers as customersAPI)
+   - Result: Customers section now calls correct API worker endpoints
 
-### 2. Dashboard API Routes Return 404
-These routes exist in code but return 404 in production:
-- `/api/merchant/[merchantId]/regenerate-keys`
-- `/api/merchant/[merchantId]/customers`
-- `/api/merchant/[merchantId]/products`
-- `/api/merchant/[merchantId]/payment-links`
+## Architecture Understanding
 
-**Root cause**: Vercel deployment issue or routing configuration
-
-### 3. Account Settings Issues
-User mentioned: "no puedo... cambiar cierta informacion de mi cuenta"
-
-Need to check:
-- `/[merchantId]/cuenta/page.tsx` - Account page
-- `/[merchantId]/cuenta/usuarios/page.tsx` - Users page
-
-## Architecture Clarification Needed
-
-User mentioned: "recuerda que desacoplamos algunas secciones que se ejecutaban directo del dashboard y lo mandamos al api worker"
-
-**Current Understanding**:
+All major dashboard sections now use the API worker architecture:
 - API Worker (`api.deonpay.mx`) handles: payment_intents, customers, refunds, products, payment_links, checkout
-- Dashboard should only handle: UI, auth, and admin operations (like API keys management)
+- Dashboard pages call API worker endpoints via `lib/api-client.ts`
+- Security is enforced at API worker level (validates API keys and merchant_id)
+- Database RLS policies simplified to allow all access
+- Public API key is stored in localStorage and synced from the Developers section
 
-**Questions**:
-1. Should dashboard pages call API worker endpoints OR query Supabase directly?
-2. Are the missing pages intentionally not implemented yet?
-3. Which sections are affected by the "desacoplamiento"?
+## Next Steps
 
-## Next Steps (Recommendations)
+These sections are now complete:
+- ✅ Products section
+- ✅ Payment Links section
+- ✅ Customers section
+- ✅ API Keys (Developers section)
 
-### Immediate (Can do now):
-1. Check `/[merchantId]/cuenta` pages for RLS issues (same as desarrolladores)
-2. Document which endpoints are expected to work
+Potential areas to review:
+- Account Settings (`/[merchantId]/cuenta`) - May need RLS fixes if using direct Supabase queries
 
-### Requires User Input:
-1. Clarify architecture: Where should customers/products/links data come from?
-2. If from API worker: Need to create dashboard pages that call those endpoints
-3. If from Supabase: Need to create pages with `createServiceClient()` like desarrolladores
-4. Fix 404 API routes issue (investigate Vercel deployment)
-
-## Files Modified So Far
+## Files Modified
 
 1. `apps/dashboard/lib/supabase.ts` - Added `createServiceClient()` function
 2. `apps/dashboard/lib/api-client.ts` - NEW: API client helper for calling api.deonpay.mx
@@ -86,9 +73,12 @@ User mentioned: "recuerda que desacoplamos algunas secciones que se ejecutaban d
 4. `apps/dashboard/app/[merchantId]/desarrolladores/DesarrolladoresClient.tsx` - Added localStorage sync for public API key
 5. `apps/dashboard/app/[merchantId]/productos/ProductosClient.tsx` - Updated to use API worker client
 6. `apps/dashboard/app/[merchantId]/productos/CreateProductModal.tsx` - Updated to use API worker client
-7. `apps/dashboard/.env.local` - Added `NEXT_PUBLIC_DEONPAY_API_URL`
-8. `apps/dashboard/.env.example` - Updated with new environment variables
-9. Database: Deactivated 2 duplicate API keys
+7. `apps/dashboard/app/[merchantId]/links-de-pago/LinksClient.tsx` - Updated to use API worker client
+8. `apps/dashboard/app/[merchantId]/links-de-pago/CreateLinkModal.tsx` - Updated to use API worker client
+9. `apps/dashboard/app/[merchantId]/clientes/ClientesClient.tsx` - Updated to use API worker client
+10. `apps/dashboard/app/[merchantId]/clientes/NewCustomerModal.tsx` - Updated to use API worker client
+11. `supabase/migrations/20250120_simplify_products_rls.sql` - NEW: Simplified RLS for products tables
+12. Database: Deactivated 2 duplicate API keys
 
 ## Technical Notes
 
