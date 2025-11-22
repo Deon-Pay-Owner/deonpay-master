@@ -113,20 +113,27 @@ export async function POST(req: NextRequest) {
     }
 
     // STEP 6: Get merchant's public API key to call API Worker
-    const { data: apiKey, error: keyError } = await supabase
+    const { data: apiKeys, error: keyError } = await supabase
       .from('api_keys')
-      .select('id')
+      .select('public_key, key_type, is_active, created_at')
       .eq('merchant_id', paymentLink.merchant_id)
-      .eq('type', 'public')
-      .eq('active', true)
-      .single()
+      .eq('key_type', 'public')
+      .eq('is_active', true)
+      .not('public_key', 'is', null)
+      .order('created_at', { ascending: false })
 
-    if (keyError || !apiKey) {
+    if (keyError || !apiKeys || apiKeys.length === 0) {
       return NextResponse.json(
-        { error: { message: 'Merchant API key not found', code: 'api_key_not_found' } },
+        { error: { message: 'Merchant public API key not found', code: 'api_key_not_found' } },
         { status: 500 }
       )
     }
+
+    // Prefer live keys over test keys
+    const liveKey = apiKeys.find(k => k.public_key.startsWith('pk_live_'))
+    const testKey = apiKeys.find(k => k.public_key.startsWith('pk_test_'))
+    const selectedKey = liveKey || testKey || apiKeys[0]
+    const publicKey = selectedKey.public_key
 
     // STEP 7: Create or find customer (if email provided)
     let customerId: string | undefined
@@ -137,7 +144,7 @@ export async function POST(req: NextRequest) {
         `${API_BASE_URL}/api/v1/customers?email=${encodeURIComponent(email)}&limit=1`,
         {
           headers: {
-            'Authorization': `Bearer ${apiKey.id}`,
+            'Authorization': `Bearer ${publicKey}`,
             'Content-Type': 'application/json'
           }
         }
@@ -155,7 +162,7 @@ export async function POST(req: NextRequest) {
         const customerCreateResponse = await fetch(`${API_BASE_URL}/api/v1/customers`, {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${apiKey.id}`,
+            'Authorization': `Bearer ${publicKey}`,
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
@@ -200,7 +207,7 @@ export async function POST(req: NextRequest) {
     const paymentIntentResponse = await fetch(`${API_BASE_URL}/api/v1/payment_intents`, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${apiKey.id}`,
+        'Authorization': `Bearer ${publicKey}`,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify(paymentIntentPayload)
@@ -222,7 +229,7 @@ export async function POST(req: NextRequest) {
       paymentIntentId: paymentIntent.id,
       amount: finalAmount,
       currency: paymentLink.currency || 'MXN',
-      publicKey: apiKey.id // Return public key for DeonPay Elements
+      publicKey: publicKey // Return public key for DeonPay Elements
     })
 
   } catch (error: any) {
