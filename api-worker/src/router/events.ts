@@ -244,18 +244,85 @@ export async function emitEvent(params: EmitEventParams): Promise<EventPayload> 
 
 /**
  * Emit payment_intent.succeeded event
+ *
+ * Also handles auto-update for payment links when applicable:
+ * - Increments completed_sessions_count
+ * - Updates last_paid_at in metadata
+ * - Auto-deactivates link if max_uses reached
  */
 export async function emitPaymentIntentSucceeded(
   supabase: SupabaseClient,
   merchantId: string,
   paymentIntent: PaymentIntent
 ): Promise<void> {
+  // Emit the event
   await emitEvent({
     supabase,
     merchantId,
     eventType: 'payment_intent.succeeded',
     data: paymentIntent,
   })
+
+  // Auto-update payment link if this payment came from a payment link
+  if (paymentIntent.metadata?.payment_link_id) {
+    try {
+      console.log('[Events] Updating payment link for payment_intent.succeeded:', {
+        paymentLinkId: paymentIntent.metadata.payment_link_id,
+        paymentIntentId: paymentIntent.id,
+      })
+
+      // Fetch current payment link state
+      const { data: link, error: linkError } = await supabase
+        .from('payment_links')
+        .select('id, completed_sessions_count, restrictions, metadata, active')
+        .eq('id', paymentIntent.metadata.payment_link_id)
+        .single()
+
+      if (linkError || !link) {
+        console.error('[Events] Failed to fetch payment link:', linkError)
+        return
+      }
+
+      // Calculate new values
+      const newCount = (link.completed_sessions_count || 0) + 1
+      const maxUses = link.restrictions?.completed_sessions?.limit
+      const shouldDeactivate = maxUses && newCount >= maxUses
+
+      console.log('[Events] Payment link update:', {
+        paymentLinkId: link.id,
+        currentCount: link.completed_sessions_count || 0,
+        newCount,
+        maxUses,
+        shouldDeactivate,
+      })
+
+      // Update payment link
+      const { error: updateError } = await supabase
+        .from('payment_links')
+        .update({
+          completed_sessions_count: newCount,
+          metadata: {
+            ...link.metadata,
+            last_paid_at: new Date().toISOString(),
+          },
+          active: shouldDeactivate ? false : link.active,
+        })
+        .eq('id', link.id)
+
+      if (updateError) {
+        console.error('[Events] Failed to update payment link:', updateError)
+      } else {
+        console.log('[Events] Payment link updated successfully:', {
+          paymentLinkId: link.id,
+          newCount,
+          deactivated: shouldDeactivate,
+        })
+      }
+    } catch (error) {
+      console.error('[Events] Error updating payment link:', error)
+      // Don't throw - this shouldn't break the main event emission
+    }
+  }
 }
 
 /**
